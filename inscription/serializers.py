@@ -1,5 +1,11 @@
 from rest_framework import serializers
 from .models import Concours, InscriptionConcours, ResultatConcours, Candidat, Etudiant, Formulaire
+from .models import ResultatBaccalaureat
+
+class ResultatBaccalaureatSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ResultatBaccalaureat
+        fields = '__all__'
 
 class ConcoursSerializer(serializers.ModelSerializer):
     class Meta:

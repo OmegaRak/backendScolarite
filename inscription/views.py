@@ -6,13 +6,94 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 import pandas as pd
 from django.conf import settings
 from django.db import transaction
-
-from .models import Concours, InscriptionConcours, ResultatConcours, Candidat, Etudiant, Formulaire
+from .emails import notifier_admission
+from django.apps import apps
+from .models import Concours, InscriptionConcours, ResultatConcours, Candidat, Etudiant, Formulaire, ResultatBaccalaureat
 from .serializers import (
     ConcoursSerializer, InscriptionConcoursSerializer, ResultatConcoursSerializer,
-    CandidatSerializer, EtudiantSerializer, FormulaireSerializer
+    CandidatSerializer, EtudiantSerializer, FormulaireSerializer, ResultatBaccalaureatSerializer
 )
 from .permissions import IsAdminUser, IsCandidatUser
+
+
+class ResultatBaccalaureatImportView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = (MultiPartParser, FormParser)
+
+    def post(self, request):
+        # Vérifier le rôle ADMIN
+        if getattr(request.user, 'role', None) != 'ADMIN':
+            return Response({"error": "Accès refusé"}, status=403)
+
+        # Vérifier si un fichier est envoyé
+        if "fichier" not in request.FILES:
+            return Response({"error": "Envoyer un fichier Excel/CSV via 'fichier'."}, status=400)
+
+        fichier = request.FILES["fichier"]
+
+        # Lecture du fichier CSV ou Excel
+        try:
+            if fichier.name.lower().endswith(".csv"):
+                df = pd.read_csv(fichier)
+            else:
+                df = pd.read_excel(fichier)
+        except Exception as e:
+            return Response({"error": f"Impossible de lire le fichier : {str(e)}"}, status=400)
+
+        # Colonnes obligatoires
+        required_columns = ["numero_inscription", "nom", "prenom", "status", "annee_scolaire"]
+        for col in required_columns:
+            if col not in df.columns:
+                return Response({"error": f"Colonne manquante : {col}"}, status=400)
+
+        resultats_ok = []
+        erreurs = []
+
+        # Parcours des lignes
+        for index, row in df.iterrows():
+            numero = str(row["numero_inscription"]).strip()
+            nom = str(row["nom"]).strip()
+            prenom = str(row["prenom"]).strip()
+            status_admis = str(row["status"]).strip().upper()
+            annee = str(row["annee_scolaire"]).strip()
+
+            admis = status_admis == "ADMIS"
+
+            try:
+                # Update si numero_inscription existe, sinon création
+                resultat, created = ResultatBaccalaureat.objects.update_or_create(
+                    numero_inscription=numero,
+                    defaults={
+                        "nom": nom,
+                        "prenom": prenom,
+                        "annee_scolaire": annee,
+                        "admis": admis
+                    }
+                )
+                resultats_ok.append(resultat)
+            except Exception as e:
+                erreurs.append(f"Ligne {index + 2} : {str(e)}")  # +2 pour tenir compte de l'entête CSV/Excel
+
+        # Sérialisation des résultats importés
+        serializer = ResultatBaccalaureatSerializer(resultats_ok, many=True)
+
+        return Response({
+            "status": "success",
+            "importes": len(resultats_ok),
+            "erreurs": erreurs,
+            "resultats": serializer.data
+        }, status=201)
+
+        
+class ResultatBaccalaureatListView(generics.ListAPIView):
+    """
+    Liste tous les bacheliers importés (admin ou utilisateur connecté)
+    """
+    serializer_class = ResultatBaccalaureatSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return ResultatBaccalaureat.objects.all().order_by('-annee_scolaire')
 
 # -------- Concours --------
 class ConcoursListCreateView(generics.ListCreateAPIView):
@@ -29,7 +110,8 @@ class ConcoursRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
 class InscriptionConcoursCreateView(generics.CreateAPIView):
     """
     Crée une inscription au concours.
-    Le champ 'numero_inscription' est envoyé depuis le frontend.
+    Validation automatique : vérifie si le candidat est admis au baccalauréat
+    avant de permettre l'inscription.
     """
     serializer_class = InscriptionConcoursSerializer
     permission_classes = [IsAuthenticated, IsCandidatUser]
@@ -39,30 +121,43 @@ class InscriptionConcoursCreateView(generics.CreateAPIView):
         utilisateur = request.user
         concours_id = request.data.get('concours')
         justificatif = request.data.get('justificatif_paiement', None)
-        numero_inscription = request.data.get('numero_inscription', None)  # récupéré depuis frontend
+        numero_inscription = request.data.get('numero_inscription', None)  # numéro bac
 
         if not concours_id:
             return Response({"error": "Le champ 'concours' est obligatoire."}, status=400)
+        if not numero_inscription:
+            return Response({"error": "Le numéro d'inscription au bac est obligatoire."}, status=400)
 
+        # Vérification du concours
         try:
             concours = Concours.objects.get(pk=concours_id)
         except Concours.DoesNotExist:
             return Response({"error": "Concours introuvable."}, status=404)
 
-        # update_or_create pour éviter les doublons
+        # Vérification du bac : doit être admis
+        bac_result = ResultatBaccalaureat.objects.filter(
+            numero_inscription=numero_inscription,
+            admis=True
+        ).first()
+
+        if not bac_result:
+            return Response({
+                "error": "Inscription impossible : vous devez être admis au baccalauréat."
+            }, status=400)
+
+        # Création ou mise à jour de l'inscription
         inscription, created = InscriptionConcours.objects.update_or_create(
             utilisateur=utilisateur,
             concours=concours,
             defaults={
                 "justificatif_paiement": justificatif,
-                "numero_inscription": numero_inscription  # sauvegarde le numéro
+                "numero_inscription": numero_inscription
             }
         )
 
         serializer = self.get_serializer(inscription, context={'request': request})
         status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
         return Response(serializer.data, status=status_code)
-
 
 class ListeInscriptionsView(generics.ListAPIView):
     serializer_class = InscriptionConcoursSerializer
@@ -97,81 +192,106 @@ class ResultatConcoursImportView(APIView):
 
     @transaction.atomic
     def post(self, request):
+        print("🚀 IMPORT RESULTATS DÉMARRÉ")
+
         if "fichier" not in request.FILES:
-            return Response({"error":"Envoyer un fichier Excel/CSV via 'fichier'."}, status=400)
+            return Response({"error": "Fichier manquant"}, status=400)
+
         fichier = request.FILES["fichier"]
+
         try:
-            if fichier.name.lower().endswith(".csv"):
-                df = pd.read_csv(fichier)
-            else:
-                df = pd.read_excel(fichier)
+            df = pd.read_csv(fichier) if fichier.name.endswith(".csv") else pd.read_excel(fichier)
         except Exception as e:
-            return Response({"error": f"Impossible de lire le fichier : {str(e)}"}, status=400)
+            return Response({"error": str(e)}, status=400)
 
-        required_columns = ["concours","nom","prenom","note"]
-        for col in required_columns:
-            if col not in df.columns:
-                return Response({"error": f"Colonne manquante : {col}"}, status=400)
+        print("📄 Colonnes :", df.columns)
 
-        resultats_importes = []
-        erreurs = []
-
-        from django.apps import apps
         Utilisateur = apps.get_model(settings.AUTH_USER_MODEL)
 
+        resultats = []
+        erreurs = []
+
         for index, row in df.iterrows():
-            concours_nom = str(row["concours"]).strip()
-            nom = str(row["nom"]).strip()
-            prenom = str(row["prenom"]).strip()
+            print(f"\n📌 LIGNE {index + 2}")
+
+            concours_nom = str(row.get("concours")).strip()
+            nom = str(row.get("nom")).strip()
+            prenom = str(row.get("prenom")).strip()
+            email = str(row.get("email", "")).strip()
+
             try:
-                note = float(row["note"])
-            except Exception:
-                erreurs.append(f"Ligne {index+2}: note invalide ({row['note']}).")
+                note = float(row.get("note"))
+            except:
+                erreurs.append(f"Ligne {index+2} : note invalide")
                 continue
 
             concours = Concours.objects.filter(nom__iexact=concours_nom).first()
             if not concours:
-                erreurs.append(f"Ligne {index+2}: Concours '{concours_nom}' introuvable.")
+                erreurs.append(f"Ligne {index+2} : concours introuvable")
                 continue
 
-            utilisateur = Utilisateur.objects.filter(first_name__iexact=prenom, last_name__iexact=nom).first()
+            # 🔎 RECHERCHE UTILISATEUR ROBUSTE
+            utilisateur = None
+            if email:
+                utilisateur = Utilisateur.objects.filter(email__iexact=email).first()
+
             if not utilisateur:
-                utilisateur = Utilisateur.objects.filter(username__iexact=f"{prenom}.{nom}").first()
+                utilisateur = Utilisateur.objects.filter(
+                    first_name__iexact=prenom,
+                    last_name__iexact=nom
+                ).first()
+
             if not utilisateur:
-                erreurs.append(f"Ligne {index+2}: Candidat '{nom} {prenom}' introuvable.")
+                erreurs.append(f"Ligne {index+2} : utilisateur introuvable")
                 continue
 
-            admis_bool = note >= (concours.note_deliberation or 0)
+            print("👤 Utilisateur :", utilisateur.email)
 
-            resultat, created = ResultatConcours.objects.update_or_create(
+            admis = note >= (concours.note_deliberation or 0)
+            print("🎯 ADMIs :", admis)
+
+            resultat, _ = ResultatConcours.objects.update_or_create(
                 concours=concours,
                 utilisateur=utilisateur,
                 defaults={
                     "note": note,
-                    "classement": row.get("classement", None),
-                    "admis": admis_bool
+                    "admis": admis,
+                    "classement": row.get("classement")
                 }
             )
 
-            # Mise à jour role et Etudiant
-            if admis_bool and getattr(utilisateur, 'role', None) != 'ADMIN':
-                utilisateur.role = 'ETUDIANT'
-                utilisateur.save(update_fields=['role'])
+            # 🎓 Passage candidat → étudiant
+            if admis and getattr(utilisateur, "role", None) != "ADMIN":
+                utilisateur.role = "ETUDIANT"
+                utilisateur.save(update_fields=["role"])
 
-                candidat = getattr(utilisateur, 'candidat_profile', None)
-                if candidat and not hasattr(candidat, 'etudiant_profile'):
-                    matricule = f"{concours.id:03d}-{utilisateur.id:04d}"
-                    Etudiant.objects.create(candidat=candidat, matricule=matricule)
+                candidat = getattr(utilisateur, "candidat_profile", None)
+                if candidat and not hasattr(candidat, "etudiant_profile"):
+                    Etudiant.objects.create(
+                        candidat=candidat,
+                        matricule=f"{concours.id:03d}-{utilisateur.id:04d}"
+                    )
 
-            resultats_importes.append(resultat)
+            # 📧 ENVOI MAIL
+            try:
+                print("📧 ENVOI MAIL...")
+                notifier_admission(utilisateur, concours, admis)
+                print("✅ MAIL OK")
+            except Exception as e:
+                print("❌ ERREUR MAIL :", e)
+                erreurs.append(f"Ligne {index+2} : erreur mail")
 
-        serializer = ResultatConcoursSerializer(resultats_importes, many=True, context={'request': request})
+            resultats.append(resultat)
+
+        serializer = ResultatConcoursSerializer(resultats, many=True, context={"request": request})
+
         return Response({
-            "status":"success",
-            "importes": len(resultats_importes),
+            "status": "success",
+            "importes": len(resultats),
             "erreurs": erreurs,
             "resultats": serializer.data
         }, status=201)
+
 
 
 class ListeResultatsView(generics.ListAPIView):

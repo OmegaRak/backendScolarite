@@ -6,6 +6,8 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from django.db.models import Q
 import pandas as pd
 from django.conf import settings
+from inscription.models import ResultatConcours
+from inscription.serializers import ResultatConcoursSerializer
 
 from .models import Reinscription, AnneeScolaire, Niveau, ResultatNiveau
 from .serializers import (
@@ -242,3 +244,33 @@ class ResultatNiveauListView(generics.ListAPIView):
             queryset = queryset.filter(utilisateur_id=utilisateur_id)
 
         return queryset
+
+class ResultatNiveauEtudiantView(generics.ListAPIView):
+    serializer_class = ResultatNiveauSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return ResultatNiveau.objects.filter(
+            utilisateur=self.request.user
+        ).select_related('niveau', 'annee_scolaire')
+
+class MesResultatsCompletsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        resultat_concours = ResultatConcours.objects.filter(
+            utilisateur=user
+        ).first()
+
+        resultats_niveau = ResultatNiveau.objects.filter(
+            utilisateur=user
+        ).select_related('niveau', 'annee_scolaire') \
+         .order_by('annee_scolaire__id')
+
+        return Response({
+            "concours": ResultatConcoursSerializer(resultat_concours).data
+            if resultat_concours else None,
+            "niveaux": ResultatNiveauSerializer(resultats_niveau, many=True).data
+        })

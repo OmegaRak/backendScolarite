@@ -3,10 +3,14 @@ from .views import (
     ConcoursListCreateView, ConcoursRetrieveUpdateDestroyView,
     InscriptionConcoursCreateView, ListeInscriptionsView, InscriptionConcoursUpdateStatusView,
     ResultatConcoursImportView, ListeResultatsView,
-    CandidatListCreateView, EtudiantListCreateView, FormulaireListCreateView
+    CandidatListCreateView, EtudiantListCreateView, FormulaireListCreateView, ResultatBaccalaureatImportView, 
+    ResultatBaccalaureatListView
 )
 
 urlpatterns = [
+    path('resultats-bac/import/', ResultatBaccalaureatImportView.as_view(), name='resultat-bac-import'),
+    path('bacheliers/', ResultatBaccalaureatListView.as_view(), name='liste-bacheliers'),
+
     # Concours
     path('concours/', ConcoursListCreateView.as_view(), name='concours-list-create'),
     path('concours/<int:pk>/', ConcoursRetrieveUpdateDestroyView.as_view(), name='concours-rud'),

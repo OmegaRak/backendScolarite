@@ -8,6 +8,8 @@ from .views import (
     ResultatNiveauImportView,
     ReinscriptionListUserView,
     ResultatNiveauListView,
+    ResultatNiveauEtudiantView,
+    MesResultatsCompletsView
 )
 
 urlpatterns = [
@@ -21,4 +23,7 @@ urlpatterns = [
     # ✅ Frontend
     path('user/reinscriptions/', ReinscriptionListUserView.as_view(), name='user-reinscriptions'),
     path('resultats-niveau/', ResultatNiveauListView.as_view(), name='resultats-niveau-list'),
+    path('resultats-niveau/me/', ResultatNiveauEtudiantView.as_view(), name='resultats-niveau-me'),
+    path("mes-resultats/", MesResultatsCompletsView.as_view(), name="mes-resultats-complets")
+
 ]

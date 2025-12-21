@@ -2,6 +2,18 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 
+class ResultatBaccalaureat(models.Model):
+    numero_inscription = models.CharField(max_length=50, unique=True)
+    nom = models.CharField(max_length=255)
+    prenom = models.CharField(max_length=255)
+    annee_scolaire = models.CharField(max_length=20)
+    admis = models.BooleanField(default=False)
+    date_import = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.numero_inscription} - {self.nom} {self.prenom} - {'ADMIS' if self.admis else 'NON ADMIS'}"
+
+
 class Concours(models.Model):
     nom = models.CharField(max_length=255)
     description = models.TextField(blank=True)
