@@ -8,6 +8,8 @@ class ResultatBaccalaureatSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class ConcoursSerializer(serializers.ModelSerializer):
+    etablissement = serializers.PrimaryKeyRelatedField(read_only=True)
+
     class Meta:
         model = Concours
         fields = '__all__'

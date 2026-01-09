@@ -3,8 +3,8 @@ from .views import (
     ConcoursListCreateView, ConcoursRetrieveUpdateDestroyView,
     InscriptionConcoursCreateView, ListeInscriptionsView, InscriptionConcoursUpdateStatusView,
     ResultatConcoursImportView, ListeResultatsView,
-    CandidatListCreateView, EtudiantListCreateView, FormulaireListCreateView, ResultatBaccalaureatImportView, 
-    ResultatBaccalaureatListView
+    CandidatListCreateView, EtudiantListCreateView, FormulaireListCreateView, 
+    ResultatBaccalaureatImportView, ResultatBaccalaureatListView
 )
 
 urlpatterns = [
@@ -29,4 +29,3 @@ urlpatterns = [
     path('etudiants/', EtudiantListCreateView.as_view(), name='etudiant-list-create'),
     path('formulaires/', FormulaireListCreateView.as_view(), name='formulaire-list-create'),
 ]
-

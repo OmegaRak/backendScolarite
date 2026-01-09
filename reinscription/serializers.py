@@ -4,7 +4,14 @@ from .models import AnneeScolaire, Reinscription, Niveau, ResultatNiveau
 class AnneeScolaireSerializer(serializers.ModelSerializer):
     class Meta:
         model = AnneeScolaire
-        fields = '__all__'
+        fields = [
+            'id',
+            'libelle',
+            'actif',
+            'date_creation',
+            'etablissement',
+        ]
+        read_only_fields = ['etablissement', 'date_creation']
 
 class ReinscriptionSerializer(serializers.ModelSerializer):
     utilisateur_nom = serializers.CharField(source='utilisateur.get_full_name', read_only=True)
