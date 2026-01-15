@@ -78,7 +78,7 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'scolarite', 
-        'USER': 'root', 
+        'USER': 'scolarite_user', 
         'PASSWORD': '', 
         'HOST': 'localhost', 
         'PORT': '3306', 
